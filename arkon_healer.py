@@ -1,0 +1,1 @@
+_hf_key: Optional[str] = (os.getenv("HUGGINGFACE_API_TOKEN", "").strip() or None)

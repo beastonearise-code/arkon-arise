@@ -1,0 +1,21 @@
+name: Shadow Pulse
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping /health endpoint
+        env:
+          APP_URL: ${{ secrets.ARKON_SELF_URL }}
+        run: |
+          if [ -z "$APP_URL" ]; then
+            echo "APP_URL not set; skipping"
+            exit 0
+          fi
+          UAS=("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36" "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0 Safari/537.36" "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1")
+          IDX=$((RANDOM % ${#UAS[@]}))
+          UA="${UAS[$IDX]}"
+          curl -s -A "$UA" "$APP_URL/health" || true
