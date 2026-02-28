@@ -27,12 +27,21 @@ except Exception:
 
 # --- Paths & DB Setup ---
 def _db_path() -> str:
+    # HF Space లో పర్మనెంట్ స్టోరేజ్ కోసం /tmp లేదా కరెంట్ డైరెక్టరీ
     base = "/tmp" if (os.getenv("HF_SPACE") or os.getenv("HUGGINGFACE_SPACE")) else os.path.dirname(__file__)
     return os.path.join(base, "arkon_memory.db")
 
 _CONN: Optional[sqlite3.Connection] = None
 _ADAPTER: Optional["DataAdapter"] = None
 _EXEC: Optional[concurrent.futures.ThreadPoolExecutor] = None
+
+# --- 🔱 Core Internal Functions ---
+def _init_db(c: sqlite3.Connection):
+    try:
+        c.execute("CREATE TABLE IF NOT EXISTS docs (ts INTEGER, text TEXT, meta TEXT)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_docs_ts ON docs(ts)")
+        c.commit()
+    except: c.rollback()
 
 def _conn() -> sqlite3.Connection:
     global _CONN
@@ -76,6 +85,11 @@ class DataAdapter:
         if _EXEC: _EXEC.submit(_sqlite)
         if self.sb.ok(): _EXEC.submit(self.sb.put_doc, doc)
 
+def _adapter() -> DataAdapter:
+    global _ADAPTER
+    if _ADAPTER is None: _ADAPTER = DataAdapter()
+    return _ADAPTER
+
 # --- 🔱 Encryption Engine ---
 def _dna_key() -> bytes:
     try:
@@ -108,6 +122,9 @@ def working_memory_recall(key: str) -> Optional[Any]:
         if r['key'] == key: return r['val']
     return None
 
+def working_memory_snapshot() -> List[Dict[str, Any]]:
+    return list(_WORKING)
+
 def ingest_document(text: str, meta: Optional[Dict[str, Any]] = None):
     """Securely store a document in the brain."""
     try:
@@ -123,10 +140,8 @@ def ingest_document(text: str, meta: Optional[Dict[str, Any]] = None):
 def save_failure_trace(task_name: str, error_msg: str):
     """🔱 Combined Failure Learning: Saves to DB and local JSON shard."""
     try:
-        # 1. Store in Database for RAG and Evolution Score
         ingest_document(f"failure|task:{task_name}\nerror:{error_msg}", {"type": "failure", "status": "learned"})
         
-        # 2. Store in Local JSON for quick inspection
         trace_data = {
             "ts": datetime.now().isoformat(),
             "task": task_name,
@@ -135,7 +150,7 @@ def save_failure_trace(task_name: str, error_msg: str):
         }
         
         shard_path = os.path.join(os.path.dirname(_db_path()), "arkon_failures.json")
-        with open(shard_path, "a") as f:
+        with open(shard_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(trace_data) + "\n")
             
         print(f"🔱 Arkon Memory: Failure in '{task_name}' recorded in Sovereign Vault.")
@@ -145,46 +160,32 @@ def save_failure_trace(task_name: str, error_msg: str):
 def meta_log_entry(action: str, confidence: float, outcome: str, meta: Optional[Dict] = None):
     """Track self-awareness and performance metrics."""
     try:
-        entry = f"Action: {action} | Confidence: {confidence} | Outcome: {outcome}"
-        ingest_document(entry, {"type": "meta", "confidence": confidence, **(meta or {})})
+        entry_text = f"Action: {action} | Confidence: {confidence} | Outcome: {outcome}"
+        ingest_document(entry_text, {"type": "meta", "confidence": confidence, **(meta or {})})
         working_memory_store("last_action", action)
     except: pass
 
+# --- 🔱 Namespace Sync Wrappers (For app.py compatibility) ---
 def meta_log(action: str, outcome: str, confidence: float, meta: Optional[Dict[str, Any]] = None) -> None:
-    try:
-        meta_log_entry(action, confidence, outcome, meta)
-    except: 
-        pass
+    try: meta_log_entry(action, confidence, outcome, meta)
+    except: pass
 
 def working_memory_add(action: str, outcome: str, confidence: float, meta: Optional[Dict[str, Any]] = None) -> None:
     try:
         rec = {"ts": int(time.time() * 1000), "action": action, "outcome": outcome, "confidence": float(confidence), "meta": meta or {}}
         working_memory_store("last_action_detail", rec)
-    except: 
-        pass
+    except: pass
 
 def record_failure(url: str, goal: str, selector: str, hint: str, notes: str = "", sid: Optional[str] = None) -> None:
     try:
-        ingest_document(json.dumps({"url": url, "goal": goal, "selector": selector, "hint": hint, "notes": notes, "sid": sid or "", "result": "failure"}, ensure_ascii=False), {"type": "event"})
-    except: 
-        pass
+        data = {"url": url, "goal": goal, "selector": selector, "hint": hint, "notes": notes, "sid": sid or "", "result": "failure"}
+        ingest_document(json.dumps(data, ensure_ascii=False), {"type": "event", "outcome": "failure"})
+    except: pass
 
 def record_success(url: str, goal: str, selector: str, hint: str, notes: str = "", sid: Optional[str] = None) -> None:
     try:
-        ingest_document(json.dumps({"url": url, "goal": goal, "selector": selector, "hint": hint, "notes": notes, "sid": sid or "", "result": "success"}, ensure_ascii=False), {"type": "event"})
-    except: 
-        pass
-
-def _adapter() -> DataAdapter:
-    global _ADAPTER
-    if _ADAPTER is None: _ADAPTER = DataAdapter()
-    return _ADAPTER
-
-def _init_db(c: sqlite3.Connection):
-    try:
-        c.execute("CREATE TABLE IF NOT EXISTS docs (ts INTEGER, text TEXT, meta TEXT)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_docs_ts ON docs(ts)")
-        c.commit()
-    except: c.rollback()
+        data = {"url": url, "goal": goal, "selector": selector, "hint": hint, "notes": notes, "sid": sid or "", "result": "success"}
+        ingest_document(json.dumps(data, ensure_ascii=False), {"type": "event", "outcome": "success"})
+    except: pass
 
 print("🔱 Arkon Sovereign Memory System Initialized.")
