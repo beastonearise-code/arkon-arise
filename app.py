@@ -11,27 +11,37 @@ import requests
 from fastapi import FastAPI
 from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
 from urllib3.exceptions import NameResolutionError
+import importlib
+import logging
 
-# 🔱 Sovereign AGI Modules Integration - Strictly Synced with your memory/healer files
+logger = logging.getLogger("arkon_app")
+logger.setLevel(logging.INFO)
+
+# 🔱 Sovereign AGI Modules Integration - explicit checks
+mods_ok = True
 try:
-    # arkon_healer.py లోని ఫంక్షన్లు
     from arkon_healer import propose_selector, florence2_describe_image_url, autonomous_goal, self_reflect
-    # arkon_memory.py లోని ఫంక్షన్లు (Restored functions)
+except Exception as e:
+    logger.critical(f"healer import failed: {e}")
+    mods_ok = False
+try:
     from arkon_memory import (
-        working_memory_add, working_memory_snapshot, 
+        working_memory_add, working_memory_snapshot,
         meta_log, save_failure_trace, record_failure
     )
-    # orchestrator.py లోని ఫంక్షన్లు
-    from orchestrator import route_task
-except ImportError as e:
-    print(f"🔱 Warning: AGI Modules missing or Name Mismatch: {e}")
+except Exception as e:
+    logger.critical(f"memory import failed: {e}")
+    mods_ok = False
 
 load_dotenv()
 app = FastAPI(title="Arkon Sovereign AGI", version="4.0.0")
 
 # --- Token & Chat Handling ---
-# Hugging Face Secrets లో 'TELEGRAM_TOKENS' గా ఉండాలి
-BOT_TOKEN = os.getenv("TELEGRAM_TOKENS", "").strip() or os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+# Check both TELEGRAM_BOT_TOKEN and TELEGRAM_TOKENS
+BOT_TOKEN = (
+    os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    or os.getenv("TELEGRAM_TOKENS", "").strip()
+)
 CHAT_IDS_RAW = os.getenv("TELEGRAM_CHAT_IDS", "").strip()
 
 def _chat_ids() -> List[str]:
@@ -63,10 +73,10 @@ def _brain_process(prompt: str, context: str = "General") -> str:
     try:
         # Cognition Logging
         try: meta_log("Thinking", "Initiated", 0.8, {"task": prompt[:30]})
-        except Exception as e: print(f"Logging error: {e}")
+        except Exception as e: logger.warning(f"Logging error: {e}")
         
-        # Routing to AGI Brain (orchestrator.py)
-        response = _run_async(route_task(prompt, context), timeout=60)
+        # Minimal brain route via healer where orchestrator is not present
+        response = _run_async(propose_selector("Answer concisely", f"{prompt}\nContext:{context}"), timeout=60)
         
         # Working Memory Storage
         try: working_memory_add("response", "success", 0.9, {"val": response})

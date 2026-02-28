@@ -10,6 +10,7 @@ from PIL import Image
 from transformers import AutoProcessor, AutoModelForCausalLM
 from duckduckgo_search import DDGS
 from arkon_memory import record_failure, record_success, ingest_document, meta_log
+from huggingface_hub import InferenceClient
 
 logger = logging.getLogger(__name__)
 
@@ -170,6 +171,83 @@ async def self_reflect(logs: str) -> str:
     except Exception as e:
         record_failure("local", "self_reflect", "", "", str(e))
         return ""
+
+class MultiModelVision:
+    """🔱 Divine Vision: Florence-2 for fast grounding, Qwen2-VL for complex OCR."""
+    def __init__(self, qwen_model: str = "Qwen/Qwen2-VL-2B-Instruct"):
+        self.qwen_model = qwen_model
+        self._client: Optional[InferenceClient] = None
+        self._last_use = time.time()
+        if _hf_key:
+            try:
+                self._client = InferenceClient(token=_hf_key)
+            except Exception as e:
+                logger.warning(f"Qwen2-VL client init failed: {e}")
+
+    def unload_if_idle(self, idle_seconds: float = 120.0) -> None:
+        try:
+            if time.time() - self._last_use >= idle_seconds:
+                try:
+                    global _VISION_MODEL, _VISION_PROCESSOR
+                    _VISION_MODEL = None
+                    _VISION_PROCESSOR = None
+                except Exception:
+                    pass
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+        except Exception:
+            pass
+
+    async def florence_coords(self, image_path: str) -> List[Tuple[int, int]]:
+        try:
+            res = await _remote_florence2_vision(image_path, tasks=["object_detection"])
+            od = res.get("object_detection") or {}
+            centers: List[Tuple[int, int]] = []
+            arr = od.get("<OD>") if isinstance(od, dict) else None
+            if isinstance(arr, list):
+                for o in arr:
+                    box = o.get("box") or {}
+                    x = int(box.get("x", 0)); y = int(box.get("y", 0)); w = int(box.get("w", 0)); h = int(box.get("h", 0))
+                    centers.append((x + max(1, w)//2, y + max(1, h)//2))
+            return centers
+        except Exception as e:
+            logger.warning(f"Florence coords failed: {e}")
+            return []
+
+    async def qwen_describe(self, image_path: str, prompt: str = "Describe the image in detail.") -> str:
+        try:
+            self._last_use = time.time()
+            if not self._client:
+                return "Qwen2-VL unavailable (no HF token)"
+            with open(image_path, "rb") as f:
+                img_bytes = f.read()
+            out = self._client.chat.completions.create(
+                model=self.qwen_model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image", "image_bytes": img_bytes},
+                        ],
+                    }
+                ],
+                max_tokens=512,
+                temperature=0.2,
+            )
+            txt = (out.choices[0].message.content or "").strip()
+            return txt
+        except Exception as e:
+            return f"Qwen2-VL error: {e}"
+
+    async def analyze(self, image_path: str) -> Dict[str, Any]:
+        """Runs Florence grounding and Qwen reasoning; returns combined report."""
+        florence = await _remote_florence2_vision(image_path, tasks=["caption", "object_detection"])
+        coords = await self.florence_coords(image_path)
+        qwen = await self.qwen_describe(image_path, "Provide OCR and layout understanding.")
+        self.unload_if_idle(120.0)
+        return {"florence": florence, "coords": coords, "qwen": qwen}
 
 async def evaluate_success(action_result: Any, expected_outcome: Any) -> Tuple[bool, str]:
     logger.info(f"Evaluating: Result={action_result}, Expected={expected_outcome}")

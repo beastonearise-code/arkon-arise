@@ -97,13 +97,21 @@ def _dna_key() -> bytes:
         return _hashlib.sha256(raw_id.encode()).digest()
     except: return _hashlib.sha256(b"arkon-sovereign").digest()
 
+import logging
+_mem_logger = logging.getLogger("arkon_memory")
 def _gcm_enc(b: bytes) -> bytes:
-    if not _HAS_GCM: return b
+    if not _HAS_GCM:
+        try: _mem_logger.critical("AGI SECURITY ALERT: Encryption falling back to plaintext!")
+        except Exception: pass
+        return b
     try:
         nonce = os.urandom(12)
         ct = AESGCM(_dna_key()).encrypt(nonce, b, None)
         return base64.b64encode(nonce + ct)
-    except: return b
+    except Exception:
+        try: _mem_logger.critical("AGI SECURITY ALERT: Encryption error — falling back to plaintext!")
+        except Exception: pass
+        return b
 
 # --- 🔱 Core Memory Functions ---
 _WORKING: List[Dict[str, Any]] = []
