@@ -655,3 +655,32 @@ def get_evolution_score(window: int = 200) -> Dict[str, Any]:
         return {"score": score, "success": succ, "failure": fail, "total": total}
     except Exception:
         return {"score": 0, "success": 0, "failure": 0, "total": 0}
+
+def save_failure_trace(task: str, error: str, meta: Optional[Dict[str, Any]] = None) -> None:
+    try:
+        ingest_document(f"failure|task:{task}\nerror:{error}", {"type": "failure", **(meta or {})})
+        record_failure("local", task, "", "", error)
+    except Exception as e:
+        try:
+            print(f"❌ Memory Error: Could not save trace: {e}")
+        except Exception:
+            pass
+def save_failure_trace(task_name, error_msg):
+    """అల్ట్రాన్ చేసిన తప్పులను భవిష్యత్తు కోసం గుర్తు పెట్టుకునే మెదడు భాగం"""
+    import json
+    from datetime import datetime
+    
+    trace_data = {
+        "timestamp": datetime.now().isoformat(),
+        "task": task_name,
+        "error": str(error_msg),
+        "status": "FAILED_LEARNED"
+    }
+    
+    # దీనిని ఒక 'Failure Shard' లాగా సేవ్ చేస్తున్నాం
+    try:
+        with open("arkon_failures.json", "a") as f:
+            f.write(json.dumps(trace_data) + "\n")
+        print(f"🔱 Arkon Memory: Learned from failure in {task_name}")
+    except Exception as e:
+        print(f"❌ Memory Error: Could not save trace: {e}")

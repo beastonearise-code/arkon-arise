@@ -3,6 +3,7 @@ fastapi
 uvicorn
 requests
 python-dotenv
+Pillow
 
 # --- AI Search & Vision ---
 duckduckgo-search

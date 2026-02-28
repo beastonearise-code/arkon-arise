@@ -3,6 +3,7 @@ import time
 import json
 from typing import Any, Dict, Optional, List, Tuple
 import requests
+from arkon_memory import save_failure_trace
 
 def _ollama_url() -> str:
     return os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
@@ -42,11 +43,15 @@ def route_vision_caption(prompt: str) -> str:
     return ans.strip() if ans else prompt
 
 def react(task: str, context: Optional[str] = None) -> Dict[str, Any]:
-    thought = route_reasoning(f"Analyze: {task}\nContext: {context or ''}")
-    plan = route_reasoning(f"Plan step-by-step for: {task}")
-    action = route_coding(f"Propose code changes for: {task}\nContext: {context or ''}")
-    observation = "pending"
-    return {"thought": thought, "plan": plan, "action": action, "observation": observation}
+    try:
+        thought = route_reasoning(f"Analyze: {task}\nContext: {context or ''}")
+        plan = route_reasoning(f"Plan step-by-step for: {task}")
+        action = route_coding(f"Propose code changes for: {task}\nContext: {context or ''}")
+        observation = "pending"
+        return {"thought": thought, "plan": plan, "action": action, "observation": observation}
+    except Exception as e:
+        save_failure_trace(task, str(e), {"stage": "react"})
+        return {"thought": "", "plan": "", "action": "", "observation": "error"}
 
 class Guardian:
     def __init__(self, notifier=None):
