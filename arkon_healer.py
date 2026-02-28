@@ -8,6 +8,8 @@ import torch
 from PIL import Image
 from transformers import AutoProcessor, AutoModelForCausalLM
 from duckduckgo_search import DDGS
+from orchestrator import react
+from arkon_memory import record_failure, record_success, ingest_document
 
 logger = logging.getLogger(__name__)
 
@@ -124,11 +126,18 @@ async def propose_selector(goal: str, state: str) -> str:
     return await _ddgs_brain(q)
 
 async def get_autonomous_fix(problem_description: str, current_state: str) -> str:
-    """
-    Placeholder for a function that autonomously generates a fix for a given problem.
-    """
-    logger.info(f"Attempting to get autonomous fix for: {problem_description}")
-    return f"Proposed fix for '{problem_description}': Analyze current state and suggest a solution."
+    try:
+        r = react(problem_description, current_state)
+        ingest_document(f"Thought:\n{r['thought']}\nPlan:\n{r['plan']}\nAction:\n{r['action']}", {"type": "react"})
+        ok = bool(r.get("action"))
+        if ok:
+            record_success("local", problem_description, "", "", "react", "success", "")
+        else:
+            record_failure("local", problem_description, "", "", "")
+        return r.get("action") or "No action proposed"
+    except Exception as e:
+        record_failure("local", problem_description, "", "", str(e))
+        return f"Failed to propose fix: {e}"
 
 async def evaluate_success(action_result: Any, expected_outcome: Any) -> Tuple[bool, str]:
     """
