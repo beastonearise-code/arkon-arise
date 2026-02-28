@@ -30,6 +30,7 @@ BOT_TOKEN: Optional[str] = (
     os.getenv("TELEGRAM_BOT_TOKEN", "").strip() or 
     None
 )
+CHAT_IDS_RAW: Optional[str] = (os.getenv("TELEGRAM_CHAT_IDS", "").strip() or None)
 
 # --- Sovereign Async Reactor: single event loop for background tasks ---
 _bg_loop = None
@@ -66,6 +67,13 @@ def _retry_request(method: str, url: str, *, params=None, json=None, timeout=60,
                 raise
             time.sleep(delay)
             delay = min(delay * 1.8, 20.0)
+
+def _chat_ids() -> list[str]:
+    raw = (CHAT_IDS_RAW or "").strip().strip("\"' ")
+    if not raw:
+        return []
+    parts = [p.strip() for p in raw.split(",") if p.strip()]
+    return parts
 
 def _telegram_loop():
     """టెలిగ్రామ్ బాట్ పోలింగ్ లూప్"""
@@ -151,14 +159,20 @@ def health():
 @app.on_event("startup")
 def on_startup():
     if BOT_TOKEN:
-        def warm_up_dns(hostname: str = "api.telegram.org", retries: int = 10) -> None:
+        def warm_up_dns(hostname: str = "api.telegram.org", retries: int = 10, max_seconds: int = 5) -> None:
+            start = time.time()
             for _ in range(max(1, retries)):
                 try:
                     socket.gethostbyname(hostname)
                     return
                 except Exception:
+                    if time.time() - start >= max_seconds:
+                        break
                     time.sleep(5)
-        warm_up_dns()
+        try:
+            warm_up_dns()
+        except Exception:
+            pass
         def _supervisor():
             time.sleep(20)
             backoff = 2.0
@@ -171,6 +185,16 @@ def on_startup():
                     backoff = min(backoff * 1.8, 20.0)
         threading.Thread(target=_supervisor, daemon=True).start()
         print("🔱 Background Telegram Thread Supervisor Started.")
+        try:
+            base = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+            salute = "🔱 Arkon Sovereign is Online! System: 100% Operational."
+            for cid in _chat_ids():
+                try:
+                    _post_json_with_retry(base, json={"chat_id": cid, "text": salute, "parse_mode": "HTML"}, timeout=20)
+                except Exception:
+                    continue
+        except Exception:
+            pass
 
 @retry(wait=wait_exponential(multiplier=1, min=1, max=20), stop=stop_after_attempt(20), retry=retry_if_exception_type((requests.exceptions.ConnectionError, NameResolutionError)))
 def _get_json_with_retry(url: str, *, params=None, timeout: int = 60) -> dict:
