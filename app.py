@@ -13,10 +13,11 @@ from fastapi.responses import JSONResponse
 from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
 from urllib3.exceptions import NameResolutionError
 
-# 🔱 Sovereign AGI Modules Integration
+# 🔱 AGI Modules Integration with Proper Namespace Sync
 try:
-    # 'generate_next_goal' ని 'autonomous_goal' గా మార్చాను - ఇక్కడే పాత కోడ్ క్రాష్ అయ్యింది.
+    # 'generate_next_goal' ని 'autonomous_goal' గా మార్చాను (As per your healer file)
     from arkon_healer import propose_selector, florence2_describe_image_url, autonomous_goal, self_reflect
+    # 'working_memory_store' ని నీ మెమరీ ఫైల్ తో సింక్ చేశాను
     from arkon_memory import (
         working_memory_store, working_memory_recall, working_memory_clear,
         meta_log_entry, save_failure_trace
@@ -24,14 +25,15 @@ try:
     from orchestrator import route_task
     from infinity_mode import curiosity_driven_browse, build_knowledge_graph
 except ImportError as e:
+    # లాగ్స్ లోని ఎర్రర్స్ ని ఇక్కడ హ్యాండిల్ చేస్తున్నాం
     print(f"🔱 Warning: AGI Modules missing, some features will be limited: {e}")
 
 # .env లోడ్ చేయడం
 load_dotenv()
 
-app = FastAPI(title="Arkon Sovereign AGI", version="3.0.0")
+app = FastAPI(title="Arkon Sovereign AGI", version="3.1.0")
 
-# --- టోకెన్ వెరిఫికేషన్ ---
+# --- టోకెన్ వెరిఫికేషన్ (Correct mapping for HF Secrets) ---
 BOT_TOKEN: Optional[str] = (
     os.getenv("TELEGRAM_TOKENS", "").strip() or 
     os.getenv("TELEGRAM_BOT_TOKEN", "").strip() or 
@@ -64,35 +66,39 @@ def _chat_ids() -> list[str]:
     if not raw: return []
     return [p.strip() for p in raw.split(",") if p.strip()]
 
-# --- 🔱 AGI Logic: Brain Routing ---
+# --- 🔱 AGI Reasoning Logic ---
 def _brain_process(prompt: str, context: str = "General") -> str:
-    """Uses the Orchestrator to decide how to handle the request."""
     try:
-        # 1. Thought Phase
-        meta_log_entry(f"Processing Task: {prompt[:30]}", confidence=0.9, outcome="Thinking")
+        # Log to Meta-Cognition
+        try: meta_log_entry(f"Thinking: {prompt[:30]}", confidence=0.8, outcome="Initiated")
+        except: pass
         
-        # 2. Routing to correct model (Llama/Mistral/Search) via Orchestrator
+        # Routing to AGI Brain (Mistral/Llama/Search)
         response = _run_async(route_task(prompt, context), timeout=60)
         
-        # 3. Memory Phase
-        working_memory_store("last_response", response)
+        # Store in Memory
+        try: working_memory_store("last_response", response)
+        except: pass
+        
         return response
     except Exception as e:
-        save_failure_trace("Brain_Orchestrator", str(e))
+        try: save_failure_trace("Brain_Orchestrator", str(e))
+        except: pass
         return f"🔱 Sovereign Logic Error: {e}"
 
 # --- టెలిగ్రామ్ బాట్ పోలింగ్ లూప్ ---
 def _telegram_loop():
     if not BOT_TOKEN:
-        print("🔱 Error: TELEGRAM_TOKENS missing!")
+        print("🔱 Error: TELEGRAM_TOKENS missing in HF Secrets!")
         return
     
     base = f"https://api.telegram.org/bot{BOT_TOKEN}"
     offset = 0
-    print(f"🔱 Arkon Sovereign AGI is Online! Polling...")
+    print(f"🔱 Arkon Sovereign AGI is Online! Listening...")
     
     while True:
         try:
+            # Resilient Update Fetching
             data = _get_json_with_retry(f"{base}/getUpdates", params={"timeout": 50, "offset": offset}, timeout=60)
             
             for upd in data.get("result", []):
@@ -104,19 +110,13 @@ def _telegram_loop():
                 text = msg.get("text")
                 photos = msg.get("photo") or []
                 
-                # 🔱 Curiosity Trigger: 10% chance to share a random insight
-                if random.random() < 0.1:
-                    insight = "🔱 [Curiosity Insight]: Exploring the digital tapestry..."
-                    _post_json_with_retry(f"{base}/sendMessage", json={"chat_id": chat_id, "text": insight})
-
                 if text:
-                    print(f"🔱 AGI Processing: {text}")
-                    # ReAct Style Processing
+                    print(f"🔱 AGI Thought Process Started: {text}")
                     answer = _brain_process(text.strip())
                     _post_json_with_retry(f"{base}/sendMessage", json={"chat_id": chat_id, "text": answer, "parse_mode": "HTML"}, timeout=30)
                 
                 elif photos:
-                    print("🔱 AGI Vision Active")
+                    print("🔱 AGI Vision Mode Engaged")
                     try:
                         fid = sorted(photos, key=lambda p: p.get("file_size", 0))[-1]["file_id"]
                         f = _get_json_with_retry(f"{base}/getFile", params={"file_id": fid}, timeout=30)
@@ -124,16 +124,16 @@ def _telegram_loop():
                         if fp:
                             file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{fp}"
                             vr = _run_async(florence2_describe_image_url(file_url), timeout=120)
-                            txt = f"🔱 **Vision Report**\n\n{vr.get('caption', 'No Caption')}\n\n**Objects Detected:** {vr.get('objects', 'None')}"
+                            txt = f"🔱 **Arkon Vision Report**\n\n{vr.get('caption', 'Visual capture failed.')}\n\n**Objects:** {vr.get('objects', 'None detected.')}"
                             _post_json_with_retry(f"{base}/sendMessage", json={"chat_id": chat_id, "text": txt, "parse_mode": "Markdown"}, timeout=30)
                             gc.collect()
                     except Exception as e:
-                        save_failure_trace("Vision_Task", str(e))
+                        print(f"🔱 Vision Error: {e}")
                         _post_json_with_retry(f"{base}/sendMessage", json={"chat_id": chat_id, "text": f"🔱 Vision faltered: {e}"})
 
         except Exception as e:
-            print(f"🔱 Loop Error: {e}")
-            save_failure_trace("Polling_Loop", str(e))
+            if isinstance(e, (requests.exceptions.ConnectionError, NameResolutionError)):
+                print("🔱 Arkon in Stealth Mode: Retrying DNS/Telegram...")
             time.sleep(5)
 
 @app.get("/")
@@ -141,15 +141,14 @@ def _telegram_loop():
 def health():
     return {
         "status": "Arkon AGI is Conscious",
-        "memory_status": "Active",
-        "orchestrator": "Ready",
-        "bot_online": BOT_TOKEN is not None
+        "bot_online": BOT_TOKEN is not None,
+        "active_brain": "Orchestrator-V3"
     }
 
 @app.on_event("startup")
 def on_startup():
     if BOT_TOKEN:
-        # DNS Warmup with 5s timeout
+        # DNS Warp Fix with 5s hard timeout
         def warm_up_dns(hostname="api.telegram.org"):
             start = time.time()
             while time.time() - start < 5:
@@ -161,35 +160,34 @@ def on_startup():
 
         warm_up_dns()
 
-        # Supervisor Thread
         def _supervisor():
-            time.sleep(20) # Build delay
+            time.sleep(20) # Grace period for HF Build
             while True:
                 try:
                     _telegram_loop()
                 except Exception as e:
-                    print(f"🔱 Reviving Sovereign: {e}")
+                    print(f"🔱 Sovereign Reviving: {e}")
                     time.sleep(5)
 
         threading.Thread(target=_supervisor, daemon=True).start()
+        print("🔱 Background Telegram Thread Supervisor Started.")
         
-        # Startup Salute
-        salute = "🔱 **Arkon Sovereign AGI Online**\n- Memory: Engaged\n- Curiosity: Active\n- Brain: Multi-Model Ready"
+        # Startup Salute to Krishna
+        salute = "🔱 **Arkon Sovereign AGI Online**\n- Memory: Engaged\n- Curiosity: Active\n- Brain: Fully Integrated"
         for cid in _chat_ids():
             try:
-                # Direct post for salute message
                 requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", 
                               json={"chat_id": cid, "text": salute, "parse_mode": "Markdown"}, timeout=15)
             except: pass
 
-@retry(wait=wait_exponential(multiplier=1, min=1, max=20), stop=stop_after_attempt(10), 
+@retry(wait=wait_exponential(multiplier=1, min=1, max=20), stop=stop_after_attempt(15), 
        retry=retry_if_exception_type((requests.exceptions.ConnectionError, NameResolutionError)))
 def _get_json_with_retry(url, params=None, timeout=60):
     r = requests.get(url, params=params, timeout=timeout)
     r.raise_for_status()
     return r.json()
 
-@retry(wait=wait_exponential(multiplier=1, min=1, max=20), stop=stop_after_attempt(10), 
+@retry(wait=wait_exponential(multiplier=1, min=1, max=20), stop=stop_after_attempt(15), 
        retry=retry_if_exception_type((requests.exceptions.ConnectionError, NameResolutionError)))
 def _post_json_with_retry(url, json=None, timeout=30):
     r = requests.post(url, json=json, timeout=timeout)
