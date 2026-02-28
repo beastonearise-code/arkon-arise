@@ -11,6 +11,19 @@ import urllib.request
 import urllib.parse
 import xml.etree.ElementTree as ET
 
+_knowledge_graph: Dict[str, List[str]] = {}
+def add_link(src: str, dst: str) -> None:
+    try:
+        arr = _knowledge_graph.setdefault(src, [])
+        if dst not in arr:
+            arr.append(dst)
+    except Exception:
+        pass
+def knowledge_graph_snapshot() -> Dict[str, List[str]]:
+    try:
+        return {k: list(v) for k, v in _knowledge_graph.items()}
+    except Exception:
+        return {}
 
 def _ua() -> str:
     uas = [
@@ -48,6 +61,39 @@ def shadow_search(query: str, max_results: int = 8) -> List[Dict[str, str]]:
         except Exception:
             return []
 
+def related_pages(seed: str, max_results: int = 6) -> List[str]:
+    try:
+        rows = shadow_search(seed, max_results=max_results)
+        out: List[str] = []
+        for r in rows:
+            u = r.get("href") or r.get("url") or ""
+            if u:
+                out.append(u)
+        return out
+    except Exception:
+        return []
+
+def curiosity_score(url: str) -> float:
+    try:
+        deg = len(_knowledge_graph.get(url, []))
+        host = ""
+        try:
+            import urllib.parse
+            host = urllib.parse.urlparse(url).netloc
+        except Exception:
+            host = ""
+        bonus = 0.1 if host and host.endswith(".ai") else 0.0
+        return float(deg) + bonus + random.random() * 0.5
+    except Exception:
+        return random.random()
+
+def curiosity_rank(urls: List[str]) -> List[str]:
+    try:
+        scored = [(curiosity_score(u), u) for u in urls]
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [u for _, u in scored]
+    except Exception:
+        return urls
 
 def reddit_trends(max_items: int = 10) -> List[Dict[str, str]]:
     try:

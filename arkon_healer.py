@@ -8,8 +8,8 @@ import torch
 from PIL import Image
 from transformers import AutoProcessor, AutoModelForCausalLM
 from duckduckgo_search import DDGS
-from orchestrator import react
-from arkon_memory import record_failure, record_success, ingest_document
+from orchestrator import react, route_reasoning
+from arkon_memory import record_failure, record_success, ingest_document, meta_log
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +138,36 @@ async def get_autonomous_fix(problem_description: str, current_state: str) -> st
     except Exception as e:
         record_failure("local", problem_description, "", "", str(e))
         return f"Failed to propose fix: {e}"
+
+async def autonomous_goal(state: str) -> str:
+    try:
+        g = route_reasoning(f"Given state:\n{state}\nPropose the most intelligent next goal.")
+        ingest_document(g or "", {"type": "goal"})
+        meta_log("goal", "proposed", 0.7, {"text": g or ""})
+        return g or ""
+    except Exception as e:
+        record_failure("local", "autonomous_goal", "", "", str(e))
+        return ""
+
+async def causal_reasoning(context: str) -> str:
+    try:
+        r = route_reasoning(f"Analyze causes of repeated failure:\n{context}\nExplain likely causes and remedies.")
+        ingest_document(r or "", {"type": "causal"})
+        meta_log("causal", "analyzed", 0.6, {"text": r or ""})
+        return r or ""
+    except Exception as e:
+        record_failure("local", "causal_reasoning", "", "", str(e))
+        return ""
+
+async def self_reflect(logs: str) -> str:
+    try:
+        r = route_reasoning(f"Reflect on session logs and propose improvements:\n{logs}")
+        ingest_document(r or "", {"type": "reflect"})
+        meta_log("reflect", "completed", 0.8, {"text": r or ""})
+        return r or ""
+    except Exception as e:
+        record_failure("local", "self_reflect", "", "", str(e))
+        return ""
 
 async def evaluate_success(action_result: Any, expected_outcome: Any) -> Tuple[bool, str]:
     """

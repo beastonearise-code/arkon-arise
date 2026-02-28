@@ -61,6 +61,8 @@ def swarm_publish(selector_record: Dict[str, Any]) -> None:
     url = selector_record.get("url")
     goal = selector_record.get("goal")
     sid = selector_record.get("sid", "")
+    conf = float(selector_record.get("confidence", 1.0))
+    reasoning = selector_record.get("reasoning", "")
     now = int(time.time())
     found = False
     for rec in arr:
@@ -68,19 +70,23 @@ def swarm_publish(selector_record: Dict[str, Any]) -> None:
             rec["success_count"] = int(rec.get("success_count", 1)) + 1
             rec["ts"] = now
             rec["sid"] = sid or rec.get("sid", "")
+            rec["confidence"] = conf
+            rec["reasoning"] = reasoning
             found = True
             break
     if not found:
         selector_record["success_count"] = int(selector_record.get("success_count", 1))
         selector_record["ts"] = now
         selector_record["sid"] = sid
+        selector_record["confidence"] = conf
+        selector_record["reasoning"] = reasoning
         arr.append(selector_record)
     _save(_clean_swarm(db))
     try:
         url_sb = (os.getenv("SUPABASE_URL", "") or "").strip()
         key_sb = os.getenv("SUPABASE_ANON_KEY", "").strip()
         if url_sb and key_sb:
-            body = json.dumps({"url": url, "goal": goal, "selector": sel, "success_count": selector_record.get("success_count", 1), "sid": sid, "ts": now}).encode("utf-8")
+            body = json.dumps({"url": url, "goal": goal, "selector": sel, "success_count": selector_record.get("success_count", 1), "sid": sid, "ts": now, "confidence": conf, "reasoning": reasoning}).encode("utf-8")
             req = urllib.request.Request(f"{url_sb}/rest/v1/swarm", data=body, method="POST", headers={"apikey": key_sb, "Content-Type": "application/json", "Prefer": "return=minimal"})
             urllib.request.urlopen(req, timeout=8).read()
     except Exception:

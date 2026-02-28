@@ -665,6 +665,31 @@ def save_failure_trace(task: str, error: str, meta: Optional[Dict[str, Any]] = N
             print(f"❌ Memory Error: Could not save trace: {e}")
         except Exception:
             pass
+
+_WORKING: List[Dict[str, Any]] = []
+_WORKING_LIMIT = 200
+
+def working_memory_add(action: str, outcome: str, confidence: float, meta: Optional[Dict[str, Any]] = None) -> None:
+    try:
+        rec = {"ts": int(time.time() * 1000), "action": action, "outcome": outcome, "confidence": float(confidence), "meta": meta or {}}
+        _WORKING.append(rec)
+        if len(_WORKING) > _WORKING_LIMIT:
+            del _WORKING[: max(0, len(_WORKING) - _WORKING_LIMIT)]
+    except Exception:
+        pass
+
+def working_memory_snapshot() -> List[Dict[str, Any]]:
+    try:
+        return list(_WORKING[-_WORKING_LIMIT:])
+    except Exception:
+        return []
+
+def meta_log(action: str, outcome: str, confidence: float, meta: Optional[Dict[str, Any]] = None) -> None:
+    try:
+        working_memory_add(action, outcome, confidence, meta)
+        ingest_document(json.dumps({"action": action, "outcome": outcome, "confidence": float(confidence), "meta": meta or {}}, ensure_ascii=False), {"type": "meta"})
+    except Exception:
+        pass
 def save_failure_trace(task_name, error_msg):
     """అల్ట్రాన్ చేసిన తప్పులను భవిష్యత్తు కోసం గుర్తు పెట్టుకునే మెదడు భాగం"""
     import json

@@ -29,8 +29,8 @@ except Exception:
     except Exception:
         stealth = None
 
-from arkon_healer import get_autonomous_fix, evaluate_success, propose_selector, _remote_florence2_vision
-from arkon_memory import consult_selector, record_failure, record_success, record_hostile
+from arkon_healer import get_autonomous_fix, evaluate_success, propose_selector, _remote_florence2_vision, causal_reasoning, self_reflect, autonomous_goal
+from arkon_memory import consult_selector, record_failure, record_success, record_hostile, meta_log, ingest_document
 from arkon_swarm import swarm_fetch, swarm_publish
 
 from arkon_cloud import backup_vault
@@ -513,6 +513,13 @@ async def run_dynamic_flow(browser_type: str) -> bool:
             if eval_res is False:
                 no_count += 1
                 if no_count >= 2:
+                    insight = ""
+                    try:
+                        insight = await causal_reasoning(state)
+                        ingest_document(insight or "", {"type": "causal"})
+                        meta_log("failure", "analyzed", 0.6, {"insight": insight or ""})
+                    except Exception:
+                        pass
                     record_failure(target_url, goal, selector, hint, notes="Hydra switch trigger")
                     logger.info("🔱 Ghost_Mode: Cooling down and rotating soft-signatures")
                     send_sentinel_alert("Hydra: Switching browser due to repeated failures")
@@ -525,10 +532,12 @@ async def run_dynamic_flow(browser_type: str) -> bool:
             if clicked:
                 if eval_res is not False:
                     record_success(target_url, goal, selector, hint, notes="Start clicked")
-                    swarm_publish({"url": target_url, "goal": goal, "selector": selector, "hint": hint})
+                    meta_log("click", "success", 0.8, {"selector": selector})
+                    swarm_publish({"url": target_url, "goal": goal, "selector": selector, "hint": hint, "confidence": 0.8, "reasoning": "react"})
                     send_sentinel_alert("Success: Goal achieved for dynamic_loading/2")
                 else:
                     record_failure(target_url, goal, selector, hint, notes="Start click inconclusive")
+                    meta_log("click", "inconclusive", 0.5, {"selector": selector})
                 break
         await asyncio.sleep(1.0)
         done = False
@@ -537,6 +546,7 @@ async def run_dynamic_flow(browser_type: str) -> bool:
             if eval_res is True:
                 done = True
                 record_success(target_url, "Reveal Hello World", "dynamic", "", notes="Hello World visible")
+                meta_log("goal", "success", 0.9, {"goal": "Reveal Hello World"})
                 break
             await asyncio.sleep(1.0)
         # Ghost Exit: secure wipe
@@ -546,6 +556,13 @@ async def run_dynamic_flow(browser_type: str) -> bool:
             except Exception:
                 pass
             await context.clear_cookies()
+        except Exception:
+            pass
+        log_blob = f"url:{target_url}|attempts:{no_count}|done:{done}"
+        try:
+            ref = await self_reflect(log_blob)
+            ingest_document(ref or "", {"type": "reflect"})
+            meta_log("reflect", "logged", 0.8, {"text": ref or ""})
         except Exception:
             pass
         await context.close()
@@ -600,6 +617,16 @@ def shadow_test() -> None:
 
 async def main():
     # Temporarily run diagnostic tests directly
+    if random.random() < 0.3:
+        try:
+            seeds = infinity.related_pages("start button")
+            ranked = infinity.curiosity_rank(seeds)
+            for u in ranked[:2]:
+                infinity.add_link("seed", u)
+                ingest_document(u, {"type": "curiosity"})
+                meta_log("curiosity", "visited", 0.4, {"url": u})
+        except Exception:
+            pass
     await run_diagnostic_test()
     return
 
