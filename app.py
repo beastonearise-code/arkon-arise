@@ -2,6 +2,7 @@ import os
 import threading
 import time
 import asyncio
+import gc
 from typing import Optional
 from dotenv import load_dotenv
 import requests
@@ -27,6 +28,42 @@ BOT_TOKEN: Optional[str] = (
     None
 )
 
+# --- Sovereign Async Reactor: single event loop for background tasks ---
+_bg_loop = None
+_bg_thread = None
+
+def _start_bg_loop():
+    """🔱 Sovereign Reactor: spins a dedicated asyncio loop in a daemon thread."""
+    global _bg_loop, _bg_thread
+    if _bg_loop and _bg_thread and _bg_thread.is_alive():
+        return
+    _bg_loop = asyncio.new_event_loop()
+    def _runner():
+        asyncio.set_event_loop(_bg_loop)
+        _bg_loop.run_forever()
+    _bg_thread = threading.Thread(target=_runner, daemon=True)
+    _bg_thread.start()
+
+def _run_async(coro, timeout: float = 60.0):
+    """🔱 Gatekeeper: submit coroutine to Sovereign reactor and wait for result."""
+    _start_bg_loop()
+    fut = asyncio.run_coroutine_threadsafe(coro, _bg_loop)
+    return fut.result(timeout=timeout)
+
+def _retry_request(method: str, url: str, *, params=None, json=None, timeout=60, max_attempts=6, base_delay=1.5):
+    """🔱 Tenacity-lite: resilient HTTP for NameResolution/DNS hiccups."""
+    delay = base_delay
+    for attempt in range(1, max_attempts + 1):
+        try:
+            resp = requests.request(method, url, params=params, json=json, timeout=timeout)
+            resp.raise_for_status()
+            return resp
+        except Exception as e:
+            if attempt == max_attempts:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 1.8, 20.0)
+
 def _telegram_loop():
     """టెలిగ్రామ్ బాట్ పోలింగ్ లూప్"""
     if not BOT_TOKEN:
@@ -39,36 +76,40 @@ def _telegram_loop():
     
     while True:
         try:
-            # టెలిగ్రామ్ నుంచి అప్‌డేట్స్ తెచ్చుకోవడం
-            resp = requests.get(f"{base}/getUpdates", params={"timeout": 50, "offset": offset}, timeout=60)
-            resp.raise_for_status()
+            resp = _retry_request("GET", f"{base}/getUpdates", params={"timeout": 50, "offset": offset}, timeout=60)
             data = resp.json()
             
             for upd in data.get("result", []):
                 offset = max(offset, upd.get("update_id", 0) + 1)
                 msg = upd.get("message") or {}
                 chat_id = msg.get("chat", {}).get("id")
-                if not chat_id: continue
+                if not chat_id:
+                    continue
                 
                 text = msg.get("text")
                 photos = msg.get("photo") or []
                 
                 if text:
                     print(f"🔱 Received Text: {text}")
-                    answer = _safe_ddgs_answer(text.strip())
-                    requests.post(f"{base}/sendMessage", json={"chat_id": chat_id, "text": answer}, timeout=30)
+                    try:
+                        answer = _safe_ddgs_answer(text.strip())
+                    except Exception as e:
+                        answer = f"🔱 The Sovereign senses static in the ether: {e}"
+                    _retry_request("POST", f"{base}/sendMessage", json={"chat_id": chat_id, "text": answer}, timeout=30)
                 
                 elif photos:
                     print("🔱 Received Photo")
-                    fid = sorted(photos, key=lambda p: p.get("file_size", 0))[-1]["file_id"]
-                    f = requests.get(f"{base}/getFile", params={"file_id": fid}, timeout=30).json()
-                    fp = f.get("result", {}).get("file_path")
-                    if fp:
-                        file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{fp}"
-                        vr = _safe_vision_url(file_url)
-                        txt = _format_vision(vr)
-                        requests.post(f"{base}/sendMessage", json={"chat_id": chat_id, "text": txt}, timeout=30)
-                        
+                    try:
+                        fid = sorted(photos, key=lambda p: p.get("file_size", 0))[-1]["file_id"]
+                        f = _retry_request("GET", f"{base}/getFile", params={"file_id": fid}, timeout=30).json()
+                        fp = f.get("result", {}).get("file_path")
+                        if fp:
+                            file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{fp}"
+                            vr = _safe_vision_url(file_url)
+                            txt = _format_vision(vr)
+                            _retry_request("POST", f"{base}/sendMessage", json={"chat_id": chat_id, "text": txt}, timeout=30)
+                    except Exception as e:
+                        _retry_request("POST", f"{base}/sendMessage", json={"chat_id": chat_id, "text": f"🔱 Vision faltered: {e}"}, timeout=30)
         except Exception as e:
             print(f"🔱 Bot Loop Error: {e}")
             time.sleep(5)
@@ -76,21 +117,15 @@ def _telegram_loop():
 def _safe_ddgs_answer(prompt: str) -> str:
     goal = "Answer concisely using web search"
     try:
-        try:
-            return asyncio.run(propose_selector(goal, prompt))
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            return loop.run_until_complete(propose_selector(goal, prompt))
+        return _run_async(propose_selector(goal, prompt), timeout=45)
     except Exception as e:
-        return f"Arkon Search Error: {str(e)}"
+        return f"🔱 Sovereign Whisper: network winds are restless — {str(e)}"
 
 def _safe_vision_url(url: str) -> dict:
     try:
-        try:
-            return asyncio.run(florence2_describe_image_url(url))
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            return loop.run_until_complete(florence2_describe_image_url(url))
+        v = _run_async(florence2_describe_image_url(url), timeout=90)
+        gc.collect()
+        return v
     except Exception as e:
         return {"error": str(e)}
 
@@ -112,8 +147,19 @@ def health():
 @app.on_event("startup")
 def on_startup():
     if BOT_TOKEN:
-        threading.Thread(target=_telegram_loop, daemon=True).start()
-        print("🔱 Background Telegram Thread Started.")
+        def _supervisor():
+            # Graceful startup: give the network a moment to breathe
+            time.sleep(10)
+            backoff = 2.0
+            while True:
+                try:
+                    _telegram_loop()
+                except Exception as e:
+                    print(f"🔱 Loop crashed, Sovereign revives it: {e}")
+                    time.sleep(backoff)
+                    backoff = min(backoff * 1.8, 20.0)
+        threading.Thread(target=_supervisor, daemon=True).start()
+        print("🔱 Background Telegram Thread Supervisor Started.")
 
 if __name__ == "__main__":
     import uvicorn

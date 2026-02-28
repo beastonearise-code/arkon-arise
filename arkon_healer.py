@@ -1,6 +1,7 @@
 import os
 import logging
 import asyncio
+import gc
 from typing import Optional, Dict, Any, Tuple, List
 import requests
 import torch
@@ -16,29 +17,49 @@ async def _remote_florence2_vision(image_path: str, task: str = "caption") -> Di
     try:
         device = "cuda:0" if torch.cuda.is_available() else "cpu"
         torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
-        model = AutoModelForCausalLM.from_pretrained("microsoft/Florence-2-large", torch_dtype=torch_dtype, trust_remote_code=True).to(device)
+        model = AutoModelForCausalLM.from_pretrained(
+            "microsoft/Florence-2-large",
+            torch_dtype=torch_dtype,
+            trust_remote_code=True
+        ).to(device)
         processor = AutoProcessor.from_pretrained("microsoft/Florence-2-large")
-        image = Image.open(image_path)
+        with Image.open(image_path) as img:
+            image = img.convert("RGB")
         if task == "caption":
             prompt = "<CAPTION>"
         elif task == "object_detection":
             prompt = "<OD>"
         else:
             return {"error": "Invalid task"}
-        inputs = processor(text=prompt, images=image, return_tensors="pt").to(device, torch_dtype)
-        generated_ids = model.generate(
-            input_ids=inputs["input_ids"],
-            pixel_values=inputs["pixel_values"],
-            max_new_tokens=512,
-            num_beams=3,
-            do_sample=False
-        )
-        generated_text = processor.batch_decode(generated_ids, skip_special_tokens=False)[0]
-        parsed_answer = processor.post_process_generation(generated_text, task=prompt, image_size=(image.width, image.height))
+        with torch.no_grad():
+            inputs = processor(text=prompt, images=image, return_tensors="pt")
+            inputs = {k: v.to(device, dtype=torch_dtype) if hasattr(v, "to") else v for k, v in inputs.items()}
+            generated_ids = model.generate(
+                input_ids=inputs["input_ids"],
+                pixel_values=inputs["pixel_values"],
+                max_new_tokens=512,
+                num_beams=3,
+                do_sample=False
+            )
+            generated_text = processor.batch_decode(generated_ids, skip_special_tokens=False)[0]
+            parsed_answer = processor.post_process_generation(
+                generated_text,
+                task=prompt,
+                image_size=(image.width, image.height)
+            )
         return {"result": parsed_answer}
     except Exception as e:
         logger.error(f"_remote_florence2_vision error: {e}")
         return {"error": str(e)}
+    finally:
+        try:
+            del model
+            del processor
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
 
 async def florence2_describe_image_url(image_url: str) -> Dict[str, Any]:
     try:
@@ -58,6 +79,8 @@ async def florence2_describe_image_url(image_url: str) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"florence2_describe_image_url error: {e}")
         return {"error": str(e)}
+    finally:
+        gc.collect()
 
 def _ddgs_search_modes(q: str) -> List[dict]:
     results: List[dict] = []
