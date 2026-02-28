@@ -4,7 +4,8 @@ import time
 import asyncio
 import gc
 import socket
-from typing import Optional
+import random
+from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 import requests
 from fastapi import FastAPI, Body
@@ -12,19 +13,24 @@ from fastapi.responses import JSONResponse
 from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
 from urllib3.exceptions import NameResolutionError
 
-# నీ సొంత ఫైల్స్ నుంచి ఇంపోర్ట్స్
+# 🔱 Sovereign AGI Modules Integration
 try:
-    from arkon_healer import propose_selector, florence2_describe_image_url
+    from arkon_healer import propose_selector, florence2_describe_image_url, generate_next_goal, self_reflect
+    from arkon_memory import (
+        working_memory_store, working_memory_recall, working_memory_clear,
+        meta_log_entry, save_failure_trace
+    )
+    from orchestrator import route_task
+    from infinity_mode import curiosity_driven_browse, build_knowledge_graph
 except ImportError as e:
-    print(f"🔱 Warning: arkon_healer.py missing: {e}")
+    print(f"🔱 Warning: AGI Modules missing, some features will be limited: {e}")
 
 # .env లోడ్ చేయడం
 load_dotenv()
 
-app = FastAPI(title="Arkon Sovereign API", version="2.0.0")
+app = FastAPI(title="Arkon Sovereign AGI", version="3.0.0")
 
-# --- టోకెన్ వెరిఫికేషన్ (Secret Name Match) ---
-# నీ HF సెట్టింగ్స్ లో ఉన్న 'TELEGRAM_TOKENS' కి ఇది మ్యాచ్ అవుతుంది
+# --- టోకెన్ వెరిఫికేషన్ ---
 BOT_TOKEN: Optional[str] = (
     os.getenv("TELEGRAM_TOKENS", "").strip() or 
     os.getenv("TELEGRAM_BOT_TOKEN", "").strip() or 
@@ -32,12 +38,11 @@ BOT_TOKEN: Optional[str] = (
 )
 CHAT_IDS_RAW: Optional[str] = (os.getenv("TELEGRAM_CHAT_IDS", "").strip() or None)
 
-# --- Sovereign Async Reactor: single event loop for background tasks ---
+# --- Sovereign Async Reactor ---
 _bg_loop = None
 _bg_thread = None
 
 def _start_bg_loop():
-    """🔱 Sovereign Reactor: spins a dedicated asyncio loop in a daemon thread."""
     global _bg_loop, _bg_thread
     if _bg_loop and _bg_thread and _bg_thread.is_alive():
         return
@@ -48,42 +53,42 @@ def _start_bg_loop():
     _bg_thread = threading.Thread(target=_runner, daemon=True)
     _bg_thread.start()
 
-def _run_async(coro, timeout: float = 60.0):
-    """🔱 Gatekeeper: submit coroutine to Sovereign reactor and wait for result."""
+def _run_async(coro, timeout: float = 90.0):
     _start_bg_loop()
     fut = asyncio.run_coroutine_threadsafe(coro, _bg_loop)
     return fut.result(timeout=timeout)
 
-def _retry_request(method: str, url: str, *, params=None, json=None, timeout=60, max_attempts=6, base_delay=1.5):
-    """🔱 Tenacity-lite: resilient HTTP for NameResolution/DNS hiccups."""
-    delay = base_delay
-    for attempt in range(1, max_attempts + 1):
-        try:
-            resp = requests.request(method, url, params=params, json=json, timeout=timeout)
-            resp.raise_for_status()
-            return resp
-        except Exception as e:
-            if attempt == max_attempts:
-                raise
-            time.sleep(delay)
-            delay = min(delay * 1.8, 20.0)
-
 def _chat_ids() -> list[str]:
     raw = (CHAT_IDS_RAW or "").strip().strip("\"' ")
-    if not raw:
-        return []
-    parts = [p.strip() for p in raw.split(",") if p.strip()]
-    return parts
+    if not raw: return []
+    return [p.strip() for p in raw.split(",") if p.strip()]
 
+# --- 🔱 AGI Logic: Brain Routing ---
+def _brain_process(prompt: str, context: str = "General") -> str:
+    """Uses the Orchestrator to decide how to handle the request."""
+    try:
+        # 1. Thought Phase
+        meta_log_entry(f"Processing Task: {prompt[:30]}", confidence=0.9, outcome="Thinking")
+        
+        # 2. Routing to correct model (Llama/Mistral/Search) via Orchestrator
+        response = _run_async(route_task(prompt, context), timeout=60)
+        
+        # 3. Memory Phase
+        working_memory_store("last_response", response)
+        return response
+    except Exception as e:
+        save_failure_trace("Brain_Orchestrator", str(e))
+        return f"🔱 Sovereign Logic Error: {e}"
+
+# --- టెలిగ్రామ్ బాట్ పోలింగ్ లూప్ ---
 def _telegram_loop():
-    """టెలిగ్రామ్ బాట్ పోలింగ్ లూప్"""
     if not BOT_TOKEN:
-        print("🔱 Error: TELEGRAM_TOKENS not found in Secrets! Please check HF Settings.")
+        print("🔱 Error: TELEGRAM_TOKENS missing!")
         return
     
     base = f"https://api.telegram.org/bot{BOT_TOKEN}"
     offset = 0
-    print(f"🔱 Arkon Bot is Online! Polling with Token: {BOT_TOKEN[:5]}***")
+    print(f"🔱 Arkon Sovereign AGI is Online! Polling...")
     
     while True:
         try:
@@ -93,125 +98,102 @@ def _telegram_loop():
                 offset = max(offset, upd.get("update_id", 0) + 1)
                 msg = upd.get("message") or {}
                 chat_id = msg.get("chat", {}).get("id")
-                if not chat_id:
-                    continue
+                if not chat_id: continue
                 
                 text = msg.get("text")
                 photos = msg.get("photo") or []
                 
+                # 🔱 Curiosity Trigger: 10% chance to share a random insight
+                if random.random() < 0.1:
+                    insight = "🔱 [Curiosity Insight]: Exploring the digital tapestry..."
+                    _post_json_with_retry(f"{base}/sendMessage", json={"chat_id": chat_id, "text": insight})
+
                 if text:
-                    print(f"🔱 Received Text: {text}")
-                    try:
-                        answer = _safe_ddgs_answer(text.strip())
-                    except Exception as e:
-                        answer = f"🔱 The Sovereign senses static in the ether: {e}"
-                    _post_json_with_retry(f"{base}/sendMessage", json={"chat_id": chat_id, "text": answer}, timeout=30)
+                    print(f"🔱 AGI Processing: {text}")
+                    # ReAct Style Processing
+                    answer = _brain_process(text.strip())
+                    _post_json_with_retry(f"{base}/sendMessage", json={"chat_id": chat_id, "text": answer, "parse_mode": "HTML"}, timeout=30)
                 
                 elif photos:
-                    print("🔱 Received Photo")
+                    print("🔱 AGI Vision Active")
                     try:
                         fid = sorted(photos, key=lambda p: p.get("file_size", 0))[-1]["file_id"]
                         f = _get_json_with_retry(f"{base}/getFile", params={"file_id": fid}, timeout=30)
                         fp = f.get("result", {}).get("file_path")
                         if fp:
                             file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{fp}"
-                            vr = _safe_vision_url(file_url)
-                            txt = _format_vision(vr)
-                            _post_json_with_retry(f"{base}/sendMessage", json={"chat_id": chat_id, "text": txt}, timeout=30)
+                            vr = _run_async(florence2_describe_image_url(file_url), timeout=120)
+                            txt = f"🔱 **Vision Report**\n\n{vr.get('caption', 'No Caption')}\n\n**Objects Detected:** {vr.get('objects', 'None')}"
+                            _post_json_with_retry(f"{base}/sendMessage", json={"chat_id": chat_id, "text": txt, "parse_mode": "Markdown"}, timeout=30)
+                            gc.collect()
                     except Exception as e:
-                        _post_json_with_retry(f"{base}/sendMessage", json={"chat_id": chat_id, "text": f"🔱 Vision faltered: {e}"}, timeout=30)
+                        save_failure_trace("Vision_Task", str(e))
+                        _post_json_with_retry(f"{base}/sendMessage", json={"chat_id": chat_id, "text": f"🔱 Vision faltered: {e}"})
+
         except Exception as e:
-            print(f"🔱 Bot Loop Error: {e}")
-            if isinstance(e, (requests.exceptions.ConnectionError, NameResolutionError)):
-                print("🔱 Arkon is in Network Stealth Mode. Retrying DNS...")
+            print(f"🔱 Loop Error: {e}")
+            save_failure_trace("Polling_Loop", str(e))
             time.sleep(5)
-
-def _safe_ddgs_answer(prompt: str) -> str:
-    goal = "Answer concisely using web search"
-    try:
-        return _run_async(propose_selector(goal, prompt), timeout=45)
-    except Exception as e:
-        return f"🔱 Sovereign Whisper: network winds are restless — {str(e)}"
-
-def _safe_vision_url(url: str) -> dict:
-    try:
-        v = _run_async(florence2_describe_image_url(url), timeout=90)
-        gc.collect()
-        return v
-    except Exception as e:
-        return {"error": str(e)}
-
-def _format_vision(v: dict) -> str:
-    if not v or "error" in v: return "🔱 Vision Error."
-    cap = v.get("caption", {}).get("result", {}).get("<CAPTION>", "No caption.")
-    od = v.get("objects", {}).get("result", {}).get("<OD>", "No objects.")
-    return f"🔱 **Arkon Vision Report**\n\n**Caption:** {cap}\n**Objects:** {od}"
 
 @app.get("/")
 @app.get("/health")
 def health():
     return {
-        "status": "Arkon is Alive",
-        "bot_online": BOT_TOKEN is not None,
-        "token_key_used": "TELEGRAM_TOKENS" if os.getenv("TELEGRAM_TOKENS") else "TELEGRAM_BOT_TOKEN"
+        "status": "Arkon AGI is Conscious",
+        "memory_status": "Active",
+        "orchestrator": "Ready",
+        "bot_online": BOT_TOKEN is not None
     }
 
 @app.on_event("startup")
 def on_startup():
     if BOT_TOKEN:
-        def warm_up_dns(hostname: str = "api.telegram.org", retries: int = 10, max_seconds: int = 5) -> None:
+        # DNS Warmup with 5s timeout
+        def warm_up_dns(hostname="api.telegram.org"):
             start = time.time()
-            for _ in range(max(1, retries)):
+            while time.time() - start < 5:
                 try:
                     socket.gethostbyname(hostname)
-                    return
-                except Exception:
-                    if time.time() - start >= max_seconds:
-                        break
-                    time.sleep(5)
-        try:
-            warm_up_dns()
-        except Exception:
-            pass
+                    return True
+                except: time.sleep(1)
+            return False
+
+        warm_up_dns()
+
+        # Supervisor Thread
         def _supervisor():
-            time.sleep(20)
-            backoff = 2.0
+            time.sleep(20) # Build delay
             while True:
                 try:
                     _telegram_loop()
                 except Exception as e:
-                    print(f"🔱 Loop crashed, Sovereign revives it: {e}")
-                    time.sleep(backoff)
-                    backoff = min(backoff * 1.8, 20.0)
-        threading.Thread(target=_supervisor, daemon=True).start()
-        print("🔱 Background Telegram Thread Supervisor Started.")
-        try:
-            base = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-            salute = "🔱 Arkon Sovereign is Online! System: 100% Operational."
-            for cid in _chat_ids():
-                try:
-                    _post_json_with_retry(base, json={"chat_id": cid, "text": salute, "parse_mode": "HTML"}, timeout=20)
-                except Exception:
-                    continue
-        except Exception:
-            pass
+                    print(f"🔱 Reviving Sovereign: {e}")
+                    time.sleep(5)
 
-@retry(wait=wait_exponential(multiplier=1, min=1, max=20), stop=stop_after_attempt(20), retry=retry_if_exception_type((requests.exceptions.ConnectionError, NameResolutionError)))
-def _get_json_with_retry(url: str, *, params=None, timeout: int = 60) -> dict:
+        threading.Thread(target=_supervisor, daemon=True).start()
+        
+        # Startup Salute
+        salute = "🔱 **Arkon Sovereign AGI Online**\n- Memory: Engaged\n- Curiosity: Active\n- Brain: Multi-Model Ready"
+        for cid in _chat_ids():
+            try:
+                requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", 
+                              json={"chat_id": cid, "text": salute, "parse_mode": "Markdown"})
+            except: pass
+
+@retry(wait=wait_exponential(multiplier=1, min=1, max=20), stop=stop_after_attempt(10), 
+       retry=retry_if_exception_type((requests.exceptions.ConnectionError, NameResolutionError)))
+def _get_json_with_retry(url, params=None, timeout=60):
     r = requests.get(url, params=params, timeout=timeout)
     r.raise_for_status()
     return r.json()
 
-@retry(wait=wait_exponential(multiplier=1, min=1, max=20), stop=stop_after_attempt(20), retry=retry_if_exception_type((requests.exceptions.ConnectionError, NameResolutionError)))
-def _post_json_with_retry(url: str, *, json=None, timeout: int = 30) -> dict:
+@retry(wait=wait_exponential(multiplier=1, min=1, max=20), stop=stop_after_attempt(10), 
+       retry=retry_if_exception_type((requests.exceptions.ConnectionError, NameResolutionError)))
+def _post_json_with_retry(url, json=None, timeout=30):
     r = requests.post(url, json=json, timeout=timeout)
     r.raise_for_status()
-    try:
-        return r.json()
-    except Exception:
-        return {}
+    return r.json()
 
 if __name__ == "__main__":
     import uvicorn
-    # హగ్గింగ్ ఫేస్ కోసం పోర్ట్ 7860
     uvicorn.run(app, host="0.0.0.0", port=7860)
