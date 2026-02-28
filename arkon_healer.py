@@ -9,7 +9,6 @@ import torch
 from PIL import Image
 from transformers import AutoProcessor, AutoModelForCausalLM
 from duckduckgo_search import DDGS
-from orchestrator import react, route_reasoning
 from arkon_memory import record_failure, record_success, ingest_document, meta_log
 
 logger = logging.getLogger(__name__)
@@ -123,13 +122,13 @@ async def propose_selector(goal: str, state: str) -> str:
 async def get_autonomous_fix(problem_description: str, current_state: str) -> str:
     """🔱 ReAct Loop: Now thread-safe for non-blocking execution."""
     try:
-        # Wrap sync orchestrator call in a thread to keep Telegram responsive
-        r = await asyncio.to_thread(react, problem_description, current_state)
-        ingest_document(f"Thought: {r['thought']}\nPlan: {r['plan']}", {"type": "react"})
-        
-        if r.get("action"):
+        thought = await _ddgs_brain(f"Analyze: {problem_description}\nContext: {current_state}")
+        plan = await _ddgs_brain(f"Plan step-by-step for: {problem_description}")
+        action = await propose_selector("Propose code changes", current_state)
+        ingest_document(f"Thought: {thought}\nPlan: {plan}", {"type": "react"})
+        if action:
             record_success("local", problem_description, "", "", "react", "success", "")
-            return r["action"]
+            return action
         record_failure("local", problem_description, "", "", "No action proposed")
         return "No action proposed"
     except Exception as e:
@@ -139,7 +138,7 @@ async def get_autonomous_fix(problem_description: str, current_state: str) -> st
 async def autonomous_goal(state: str) -> str:
     """🔱 High-Level Reasoning: Proposes the next intelligent move."""
     try:
-        g = await asyncio.to_thread(route_reasoning, f"State:\n{state}\nNext Goal?")
+        g = await _ddgs_brain(f"State:\n{state}\nNext Goal?")
         if g:
             ingest_document(g, {"type": "goal"})
             meta_log("goal", "proposed", 0.7, {"text": g})
@@ -151,7 +150,7 @@ async def autonomous_goal(state: str) -> str:
 async def causal_reasoning(context: str) -> str:
     """🔱 Causal Analysis: Why did we fail?"""
     try:
-        r = await asyncio.to_thread(route_reasoning, f"Analyze failures:\n{context}")
+        r = await _ddgs_brain(f"Analyze failures:\n{context}")
         if r:
             ingest_document(r, {"type": "causal"})
             meta_log("causal", "analyzed", 0.6, {"text": r})
@@ -163,7 +162,7 @@ async def causal_reasoning(context: str) -> str:
 async def self_reflect(logs: str) -> str:
     """🔱 Mirror Phase: Self-reflection for continuous improvement."""
     try:
-        r = await asyncio.to_thread(route_reasoning, f"Reflect on logs:\n{logs}")
+        r = await _ddgs_brain(f"Reflect on logs:\n{logs}")
         if r:
             ingest_document(r, {"type": "reflect"})
             meta_log("reflect", "completed", 0.8, {"text": r})

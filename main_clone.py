@@ -31,9 +31,7 @@ except Exception:
 
 from arkon_healer import get_autonomous_fix, evaluate_success, propose_selector, _remote_florence2_vision, causal_reasoning, self_reflect, autonomous_goal
 from arkon_memory import consult_selector, record_failure, record_success, record_hostile, meta_log, ingest_document
-from arkon_swarm import swarm_fetch, swarm_publish
 
-from arkon_cloud import backup_vault
 import infinity_mode as infinity
 from arkon_messenger import send_telegram_message, send_gmail_email, send_sentinel_alert
 
@@ -459,12 +457,7 @@ async def run_dynamic_flow(browser_type: str) -> bool:
                 sel_raw = f"{mem[0]} || {mem[1]}" if mem[1] else mem[0]
                 logger.info("🔱 Using memory selector before Brain proposal")
             if not sel_raw:
-                # Swarm consult (stub)
-                swarm = swarm_fetch(goal, target_url)
-                if swarm and swarm.get("selector"):
-                    sel_raw = f"{swarm['selector']} || {swarm.get('hint','')}"
-                if not sel_raw:
-                    sel_raw = await propose_selector(goal, state) or await get_autonomous_fix(state, "Need a selector to click Start")
+                sel_raw = await propose_selector(goal, state) or await get_autonomous_fix(state, "Need a selector to click Start")
                 # Sovereign Fallback: local rule-based selector if Brain unavailable
                 if not sel_raw:
                     g = goal.lower()
@@ -487,7 +480,6 @@ async def run_dynamic_flow(browser_type: str) -> bool:
                     record_hostile(target_url, notes="honeypot-detected")
                     send_telegram_message("Critical: Honeypot detected; marking site hostile")
                     send_gmail_email("Arkon Alert: Honeypot Detected", "Critical: Honeypot detected; marking site hostile")
-                    backup_vault("honeypot")
                     continue
             except Exception:
                 pass
@@ -533,7 +525,6 @@ async def run_dynamic_flow(browser_type: str) -> bool:
                 if eval_res is not False:
                     record_success(target_url, goal, selector, hint, notes="Start clicked")
                     meta_log("click", "success", 0.8, {"selector": selector})
-                    swarm_publish({"url": target_url, "goal": goal, "selector": selector, "hint": hint, "confidence": 0.8, "reasoning": "react"})
                     send_sentinel_alert("Success: Goal achieved for dynamic_loading/2")
                 else:
                     record_failure(target_url, goal, selector, hint, notes="Start click inconclusive")

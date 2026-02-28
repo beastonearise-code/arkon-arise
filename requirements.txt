@@ -12,6 +12,8 @@ torch --index-url https://download.pytorch.org/whl/cpu
 huggingface_hub
 
 # --- Automation & Messaging ---
-playwright
+playwright==1.42.0
+patchright==1.42.0
+cloudinary
 python-telegram-bot
 tenacity
