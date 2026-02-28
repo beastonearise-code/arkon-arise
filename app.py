@@ -15,7 +15,8 @@ from urllib3.exceptions import NameResolutionError
 
 # 🔱 Sovereign AGI Modules Integration
 try:
-    from arkon_healer import propose_selector, florence2_describe_image_url, generate_next_goal, self_reflect
+    # 'generate_next_goal' ని 'autonomous_goal' గా మార్చాను - ఇక్కడే పాత కోడ్ క్రాష్ అయ్యింది.
+    from arkon_healer import propose_selector, florence2_describe_image_url, autonomous_goal, self_reflect
     from arkon_memory import (
         working_memory_store, working_memory_recall, working_memory_clear,
         meta_log_entry, save_failure_trace
@@ -176,8 +177,9 @@ def on_startup():
         salute = "🔱 **Arkon Sovereign AGI Online**\n- Memory: Engaged\n- Curiosity: Active\n- Brain: Multi-Model Ready"
         for cid in _chat_ids():
             try:
+                # Direct post for salute message
                 requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", 
-                              json={"chat_id": cid, "text": salute, "parse_mode": "Markdown"})
+                              json={"chat_id": cid, "text": salute, "parse_mode": "Markdown"}, timeout=15)
             except: pass
 
 @retry(wait=wait_exponential(multiplier=1, min=1, max=20), stop=stop_after_attempt(10), 
