@@ -150,6 +150,31 @@ def meta_log_entry(action: str, confidence: float, outcome: str, meta: Optional[
         working_memory_store("last_action", action)
     except: pass
 
+def meta_log(action: str, outcome: str, confidence: float, meta: Optional[Dict[str, Any]] = None) -> None:
+    try:
+        meta_log_entry(action, confidence, outcome, meta)
+    except: 
+        pass
+
+def working_memory_add(action: str, outcome: str, confidence: float, meta: Optional[Dict[str, Any]] = None) -> None:
+    try:
+        rec = {"ts": int(time.time() * 1000), "action": action, "outcome": outcome, "confidence": float(confidence), "meta": meta or {}}
+        working_memory_store("last_action_detail", rec)
+    except: 
+        pass
+
+def record_failure(url: str, goal: str, selector: str, hint: str, notes: str = "", sid: Optional[str] = None) -> None:
+    try:
+        ingest_document(json.dumps({"url": url, "goal": goal, "selector": selector, "hint": hint, "notes": notes, "sid": sid or "", "result": "failure"}, ensure_ascii=False), {"type": "event"})
+    except: 
+        pass
+
+def record_success(url: str, goal: str, selector: str, hint: str, notes: str = "", sid: Optional[str] = None) -> None:
+    try:
+        ingest_document(json.dumps({"url": url, "goal": goal, "selector": selector, "hint": hint, "notes": notes, "sid": sid or "", "result": "success"}, ensure_ascii=False), {"type": "event"})
+    except: 
+        pass
+
 def _adapter() -> DataAdapter:
     global _ADAPTER
     if _ADAPTER is None: _ADAPTER = DataAdapter()
