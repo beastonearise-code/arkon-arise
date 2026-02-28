@@ -1,0 +1,27 @@
+name: Sync to Hugging Face Spaces
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Push to Hugging Face
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE_ID: ${{ secrets.HF_SPACE_ID }}
+        run: |
+          # పాత రిమోట్ ఉంటే తీసేసి కొత్తది యాడ్ చేస్తున్నాం
+          git remote remove hf || true
+          git remote add hf https://arkongod:$HF_TOKEN@huggingface.co/spaces/$HF_SPACE_ID
+          
+          # 'force' పుష్ చేయడం వల్ల HF లో డిలీట్ అయిన ఫైల్స్ అన్నీ మళ్ళీ క్రియేట్ అవుతాయి
+          git push hf main --force

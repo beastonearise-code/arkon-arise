@@ -1,0 +1,1 @@
+"c:\arkon alive\.venv\Scripts\python.exe" "c:\arkon alive\main_clone.py"

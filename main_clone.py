@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 import asyncio
 import logging
 import os
@@ -32,7 +35,7 @@ from arkon_swarm import swarm_fetch, swarm_publish
 
 from arkon_cloud import backup_vault
 import infinity_mode as infinity
-from arkon_messenger import send_telegram_message, send_gmail_email
+from arkon_messenger import send_telegram_message, send_gmail_email, send_sentinel_alert
 
 load_dotenv()
 
@@ -44,39 +47,64 @@ logger.setLevel(logging.INFO)
 
 
 async def run_diagnostic_test():
-    logger.info("🔱 [Diagnostic Mode]: Running Hugging Face and Ollama connection tests...")
+    logger.info("🔱 [Diagnostic Mode]: Running Vision and Keyless Brain tests...")
 
     # Test Hugging Face Cloud Brain (Florence-2)
     logger.info("🔱 [Diagnostic Mode]: Testing _remote_florence2_vision...")
-    # Create a dummy image file for testing
-    dummy_image_path = "temp_dummy_image.png"
-    try:
-        from PIL import Image
-        img = Image.new('RGB', (60, 30), color = 'red')
-        img.save(dummy_image_path)
-        vision_result = await _remote_florence2_vision(dummy_image_path)
-        if vision_result:
-            logger.info(f"🔱 [Diagnostic Mode]: Hugging Face Vision (Florence-2) Test SUCCESS. Result: {vision_result}")
+    
+    image_path = "c:\\arkon alive\\test_vision.jpg"
+    if not os.path.exists(image_path):
+        # If test_vision.jpg not found, find the first .jpg file
+        for file in os.listdir("c:\\arkon alive\\"):
+            if file.endswith(".jpg"):
+                image_path = os.path.join("c:\\arkon alive\\", file)
+                logger.info(f"🔱 [Diagnostic Mode]: Using first available JPG image: {image_path}")
+                break
         else:
-            logger.error("🔱 [Diagnostic Mode]: Hugging Face Vision (Florence-2) Test FAILED. No result returned.")
-    except Exception as e:
-        logger.error(f"🔱 [Diagnostic Mode]: Hugging Face Vision (Florence-2) Test FAILED with exception: {e}")
-    finally:
-        if os.path.exists(dummy_image_path):
-            os.remove(dummy_image_path)
+            logger.error("🔱 [Diagnostic Mode]: No JPG image found in c:\\arkon alive\\. Cannot perform visual reconnaissance.")
+            return
 
-    # Test Local Ollama Core
-    logger.info("🔱 [Diagnostic Mode]: Testing Ollama-based propose_selector...")
+    try:
+        # Perform Captioning
+        vision_caption_result = await _remote_florence2_vision(image_path, task="caption")
+        caption = vision_caption_result.get("result", {}).get("<CAPTION>", "No caption generated.")
+        logger.info(f"🔱 [Diagnostic Mode]: Florence-2 Captioning Result: {caption}")
+
+        # Perform Object Detection
+        vision_od_result = await _remote_florence2_vision(image_path, task="object_detection")
+        objects = vision_od_result.get("result", {}).get("<OD>", "No objects detected.")
+        logger.info(f"🔱 [Diagnostic Mode]: Florence-2 Object Detection Result: {objects}")
+
+        visual_description = f"Caption: {caption}\nObjects Detected: {objects}"
+        logger.info(f"🔱 [Diagnostic Mode]: Combined Visual Description:\n{visual_description}")
+
+        # Summarize via Keyless Brain
+        ollama_summary = await propose_selector(
+            goal="Summarize what this image means, providing a concise 'Vision Intelligence Report'.",
+            state=visual_description
+        )
+        logger.info(f"🔱 [Diagnostic Mode]: Vision Intelligence Report:\n{ollama_summary}")
+
+        # Send report to Telegram
+        telegram_message = f"Vision Intelligence Report:\n\n{ollama_summary}"
+        send_telegram_message(telegram_message)
+        logger.info("🔱 [Diagnostic Mode]: Vision Intelligence Report sent to Telegram.")
+
+    except Exception as e:
+        logger.error(f"🔱 [Diagnostic Mode]: Visual Reconnaissance FAILED with exception: {e}")
+    
+    # Test Keyless Brain
+    logger.info("🔱 [Diagnostic Mode]: Testing Keyless propose_selector...")
     ollama_goal = "Find the 'submit' button"
     ollama_state = "<html><body><button>Submit</button></body></html>"
     try:
         ollama_selector = await propose_selector(ollama_goal, ollama_state)
         if ollama_selector:
-            logger.info(f"🔱 [Diagnostic Mode]: Ollama Reasoning (propose_selector) Test SUCCESS. Proposed selector: {ollama_selector}")
+            logger.info(f"🔱 [Diagnostic Mode]: Keyless Reasoning (propose_selector) SUCCESS. Proposed selector: {ollama_selector}")
         else:
-            logger.error("🔱 [Diagnostic Mode]: Ollama Reasoning (propose_selector) Test FAILED. No selector proposed.")
+            logger.error("🔱 [Diagnostic Mode]: Keyless Reasoning (propose_selector) FAILED. No selector proposed.")
     except Exception as e:
-        logger.error(f"🔱 [Diagnostic Mode]: Ollama Reasoning (propose_selector) Test FAILED with exception: {e}")
+        logger.error(f"🔱 [Diagnostic Mode]: Keyless Reasoning (propose_selector) FAILED with exception: {e}")
 
     logger.info("🔱 [Diagnostic Mode]: Diagnostic tests complete.")
 
@@ -571,22 +599,26 @@ def shadow_test() -> None:
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="Arkon main script.")
-    parser.add_argument("--diagnostic", action="store_true", help="Run diagnostic tests.")
-    args = parser.parse_args()
-
-    if args.diagnostic:
-        await run_diagnostic_test()
-        return
+    # Temporarily run diagnostic tests directly
+    await run_diagnostic_test()
+    return
 
     # Existing main logic
-    browser_type = os.getenv("BROWSER_TYPE", "chromium")
-    if browser_type not in ["chromium", "firefox"]:
-        logger.error(f"Invalid BROWSER_TYPE: {browser_type}. Must be 'chromium' or 'firefox'.")
-        sys.exit(1)
+    # parser = argparse.ArgumentParser(description="Arkon main script.")
+    # parser.add_argument("--diagnostic", action="store_true", help="Run diagnostic tests.")
+    # args = parser.parse_args()
 
-    check_meta_expiry_and_alert()
-    await run_dynamic_flow(browser_type)
+    # if args.diagnostic:
+    #     await run_diagnostic_test()
+    #     return
+
+    # browser_type = os.getenv("BROWSER_TYPE", "chromium")
+    # if browser_type not in ["chromium", "firefox"]:
+    #     logger.error(f"Invalid BROWSER_TYPE: {browser_type}. Must be 'chromium' or 'firefox'.")
+    #     sys.exit(1)
+
+    # check_meta_expiry_and_alert()
+    # await run_dynamic_flow(browser_type)
 
 if __name__ == "__main__":
     asyncio.run(main())

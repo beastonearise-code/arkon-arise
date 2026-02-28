@@ -2,6 +2,7 @@ import os
 import logging
 from dotenv import load_dotenv
 from typing import Optional
+import argparse
 
 load_dotenv()
 
@@ -60,17 +61,14 @@ def send_gmail_email(subject: str, body: str) -> bool:
         logger.error(f"🔱 [Messenger]: Failed to send Gmail email: {e}")
         return False
 
+def send_sentinel_alert(message: str) -> None:
+    logger.warning(f"🔱 [Sentinel Alert]: {message}")
+
 # Example usage (for testing purposes, can be removed later)
 if __name__ == "__main__":
-    # To test, ensure .env has:
-    # TELEGRAM_BOT_TOKEN=YOUR_TELEGRAM_BOT_TOKEN
-    # TELEGRAM_CHAT_ID=YOUR_TELEGRAM_CHAT_ID
-    # GMAIL_USER=YOUR_GMAIL_EMAIL
-    # GMAIL_APP_PASS=YOUR_GMAIL_APP_PASSWORD
-    # RECIPIENT_EMAIL=YOUR_RECIPIENT_EMAIL
+    parser = argparse.ArgumentParser(description="Send a Telegram message.")
+    parser.add_argument("message", type=str, help="The message to send to Telegram.")
+    args = parser.parse_args()
 
-    print("Testing Telegram message...")
-    send_telegram_message("<b>Arkon Alert:</b> Test message from Arkon Messenger!")
-
-    print("\nTesting Gmail email...")
-    send_gmail_email("Arkon Test Email", "This is a test email from Arkon Messenger.")
+    print(f"Sending Telegram message: {args.message}")
+    send_telegram_message(args.message)

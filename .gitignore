@@ -5,5 +5,5 @@ __pycache__/
 *.json
 *.png
 *.html
-*.txt
+*
 .env
