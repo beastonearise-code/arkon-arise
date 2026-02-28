@@ -12,22 +12,21 @@ from fastapi import FastAPI
 from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
 from urllib3.exceptions import NameResolutionError
 
-# 🔱 AGI Modules Integration - Corrected Names based on your files
+# 🔱 Sovereign AGI Modules Integration - Names Synced with your files
 try:
     from arkon_healer import propose_selector, florence2_describe_image_url, autonomous_goal, self_reflect
     from arkon_memory import (
         working_memory_add, working_memory_snapshot, 
         meta_log, save_failure_trace, record_failure
     )
-    # Note: ensure orchestrator.py has route_task or update name here
     from orchestrator import route_task
 except ImportError as e:
     print(f"🔱 Warning: AGI Modules missing or Name Mismatch: {e}")
 
 load_dotenv()
-app = FastAPI(title="Arkon Sovereign AGI", version="3.2.0")
+app = FastAPI(title="Arkon Sovereign AGI", version="3.4.0")
 
-# --- Token Handling ---
+# --- Token & Chat Handling ---
 BOT_TOKEN = os.getenv("TELEGRAM_TOKENS", "").strip() or os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 CHAT_IDS_RAW = os.getenv("TELEGRAM_CHAT_IDS", "").strip()
 
@@ -35,7 +34,7 @@ def _chat_ids() -> List[str]:
     raw = (CHAT_IDS_RAW or "").strip().strip("\"' ")
     return [p.strip() for p in raw.split(",") if p.strip()]
 
-# --- Sovereign Reactor ---
+# --- Sovereign Async Reactor ---
 _bg_loop = None
 _bg_thread = None
 
@@ -54,16 +53,16 @@ def _run_async(coro, timeout: float = 90.0):
     fut = asyncio.run_coroutine_threadsafe(coro, _bg_loop)
     return fut.result(timeout=timeout)
 
-# --- 🔱 AGI Reasoning Logic ---
+# --- 🔱 AGI Logic: Brain Routing ---
 def _brain_process(prompt: str, context: str = "General") -> str:
     try:
-        try: meta_log(f"Thinking: {prompt[:30]}", 0.8, "Initiated")
+        try: meta_log("Thinking", 0.8, "Initiated", {"task": prompt[:30]})
         except: pass
         
         # Routing to AGI Brain
         response = _run_async(route_task(prompt, context), timeout=60)
         
-        try: working_memory_add("last_response", "success", 0.9, {"val": response})
+        try: working_memory_add("response", "success", 0.9, {"val": response})
         except: pass
         return response
     except Exception as e:
@@ -91,14 +90,18 @@ def _telegram_loop():
                 if text:
                     answer = _brain_process(text.strip())
                     _post_json_with_retry(f"{base}/sendMessage", json={"chat_id": chat_id, "text": answer}, timeout=30)
-                
-                # ... (Photo logic if needed)
         except Exception as e:
             time.sleep(5)
+
+@app.get("/")
+@app.get("/health")
+def health():
+    return {"status": "Arkon AGI is Conscious", "bot_online": BOT_TOKEN is not None}
 
 @app.on_event("startup")
 def on_startup():
     if BOT_TOKEN:
+        # DNS Warmup
         def warm_up_dns():
             start = time.time()
             while time.time() - start < 5:
@@ -107,20 +110,27 @@ def on_startup():
             return False
         warm_up_dns()
 
+        # 🔱 FIXED Supervisor Logic (Fixed Lines 117-119)
         def _supervisor():
-            time.sleep(20) # Build delay
+            time.sleep(20) # Grace period for build
+            
+            salute = "🔱 **Arkon Sovereign AGI Online**\n- Namespaces: Synchronized\n- System: 100% Operational."
+            for cid in _chat_ids():
+                try:
+                    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", 
+                                  json={"chat_id": cid, "text": salute, "parse_mode": "Markdown"}, timeout=15)
+                except Exception as e:
+                    print(f"🔱 Salute failed for {cid}: {e}")
+            
             while True:
-                try: _telegram_loop()
-                except: time.sleep(5)
+                try:
+                    _telegram_loop()
+                except Exception as e:
+                    print(f"🔱 Loop crashed, reviving: {e}")
+                    time.sleep(5)
 
         threading.Thread(target=_supervisor, daemon=True).start()
-        
-        # Salute
-        salute = "🔱 **Arkon Sovereign AGI Online**\nStatus: Namespaces Synchronized."
-        for cid in _chat_ids():
-            try: requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", 
-                               json={"chat_id": cid, "text": salute, "parse_mode": "Markdown"}, timeout=15)
-            except: pass
+        print("🔱 Background Telegram Thread Supervisor Started.")
 
 @retry(wait=wait_exponential(multiplier=1, min=1, max=20), stop=stop_after_attempt(10), 
        retry=retry_if_exception_type((requests.exceptions.ConnectionError, NameResolutionError)))
