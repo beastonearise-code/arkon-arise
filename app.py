@@ -3,11 +3,14 @@ import threading
 import time
 import asyncio
 import gc
+import socket
 from typing import Optional
 from dotenv import load_dotenv
 import requests
 from fastapi import FastAPI, Body
 from fastapi.responses import JSONResponse
+from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
+from urllib3.exceptions import NameResolutionError
 
 # నీ సొంత ఫైల్స్ నుంచి ఇంపోర్ట్స్
 try:
@@ -76,8 +79,7 @@ def _telegram_loop():
     
     while True:
         try:
-            resp = _retry_request("GET", f"{base}/getUpdates", params={"timeout": 50, "offset": offset}, timeout=60)
-            data = resp.json()
+            data = _get_json_with_retry(f"{base}/getUpdates", params={"timeout": 50, "offset": offset}, timeout=60)
             
             for upd in data.get("result", []):
                 offset = max(offset, upd.get("update_id", 0) + 1)
@@ -95,23 +97,25 @@ def _telegram_loop():
                         answer = _safe_ddgs_answer(text.strip())
                     except Exception as e:
                         answer = f"🔱 The Sovereign senses static in the ether: {e}"
-                    _retry_request("POST", f"{base}/sendMessage", json={"chat_id": chat_id, "text": answer}, timeout=30)
+                    _post_json_with_retry(f"{base}/sendMessage", json={"chat_id": chat_id, "text": answer}, timeout=30)
                 
                 elif photos:
                     print("🔱 Received Photo")
                     try:
                         fid = sorted(photos, key=lambda p: p.get("file_size", 0))[-1]["file_id"]
-                        f = _retry_request("GET", f"{base}/getFile", params={"file_id": fid}, timeout=30).json()
+                        f = _get_json_with_retry(f"{base}/getFile", params={"file_id": fid}, timeout=30)
                         fp = f.get("result", {}).get("file_path")
                         if fp:
                             file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{fp}"
                             vr = _safe_vision_url(file_url)
                             txt = _format_vision(vr)
-                            _retry_request("POST", f"{base}/sendMessage", json={"chat_id": chat_id, "text": txt}, timeout=30)
+                            _post_json_with_retry(f"{base}/sendMessage", json={"chat_id": chat_id, "text": txt}, timeout=30)
                     except Exception as e:
-                        _retry_request("POST", f"{base}/sendMessage", json={"chat_id": chat_id, "text": f"🔱 Vision faltered: {e}"}, timeout=30)
+                        _post_json_with_retry(f"{base}/sendMessage", json={"chat_id": chat_id, "text": f"🔱 Vision faltered: {e}"}, timeout=30)
         except Exception as e:
             print(f"🔱 Bot Loop Error: {e}")
+            if isinstance(e, (requests.exceptions.ConnectionError, NameResolutionError)):
+                print("🔱 Arkon is in Network Stealth Mode. Retrying DNS...")
             time.sleep(5)
 
 def _safe_ddgs_answer(prompt: str) -> str:
@@ -147,9 +151,16 @@ def health():
 @app.on_event("startup")
 def on_startup():
     if BOT_TOKEN:
+        def warm_up_dns(hostname: str = "api.telegram.org", retries: int = 10) -> None:
+            for _ in range(max(1, retries)):
+                try:
+                    socket.gethostbyname(hostname)
+                    return
+                except Exception:
+                    time.sleep(5)
+        warm_up_dns()
         def _supervisor():
-            # Graceful startup: give the network a moment to breathe
-            time.sleep(10)
+            time.sleep(20)
             backoff = 2.0
             while True:
                 try:
@@ -160,6 +171,21 @@ def on_startup():
                     backoff = min(backoff * 1.8, 20.0)
         threading.Thread(target=_supervisor, daemon=True).start()
         print("🔱 Background Telegram Thread Supervisor Started.")
+
+@retry(wait=wait_exponential(multiplier=1, min=1, max=20), stop=stop_after_attempt(20), retry=retry_if_exception_type((requests.exceptions.ConnectionError, NameResolutionError)))
+def _get_json_with_retry(url: str, *, params=None, timeout: int = 60) -> dict:
+    r = requests.get(url, params=params, timeout=timeout)
+    r.raise_for_status()
+    return r.json()
+
+@retry(wait=wait_exponential(multiplier=1, min=1, max=20), stop=stop_after_attempt(20), retry=retry_if_exception_type((requests.exceptions.ConnectionError, NameResolutionError)))
+def _post_json_with_retry(url: str, *, json=None, timeout: int = 30) -> dict:
+    r = requests.post(url, json=json, timeout=timeout)
+    r.raise_for_status()
+    try:
+        return r.json()
+    except Exception:
+        return {}
 
 if __name__ == "__main__":
     import uvicorn
